@@ -1,0 +1,110 @@
+### Calculating k and AUC for ABCD 
+## Modified/Frankenstein-ed by KSFD for bugs/questions/comments kate.damme@u.northwestern.edu
+## Assumes: that you have downloaded the DDT indifference scores from the NDA website, and taken in the columns of indiference scores by timepoint
+## Results in data frame that has an id column and a hyperbolic k parameter (will add time point code curremtly commented in future waves)
+# Please cite:
+# Michaelson et al., 2013 (https://doi.org/10.3389/fpsyg.2013.00355)
+# Damme gitub: https://github.com/katedamme
+#install(reshape2)
+ABCD_Reward <- readRDS("~/Downloads/DEAP-data-download.rds")
+
+### !!!! WARNING !!! the columns numbers will change based on your current data set check to ensure that you have "ddis_scr_val_indif_point_6h", "ddis_scr_val_indif_pnt_1da","ddis_scr_val_indif_pnt_1week", "ddis_scr_val_indif_pnt_1mth","ddis_scr_val_indif_pnt_3mth", "ddis_scr_val_indif_pnt_1yr","ddis_scr_val_indif_pnt_5yr"
+#  Pull indifference points
+DDT<-ABCD_Reward[,41:47]
+#  Pull ID 
+DDT$ID<-ABCD_Reward$src_subject_id
+# Pull Timepoint
+DDT$Time<-ABCD_Reward$event_name
+
+#### Making the data a long format####
+library(reshape2)
+DDT_long<-melt(data=DDT, id.vars=c("ID","Time"), mesure.vars=c("ddis_scr_val_indif_point_6h", "ddis_scr_val_indif_pnt_1da","ddis_scr_val_indif_pnt_1week", "ddis_scr_val_indif_pnt_1mth","ddis_scr_val_indif_pnt_3mth", "ddis_scr_val_indif_pnt_1yr","ddis_scr_val_indif_pnt_5yr"),value.name="IndiffPoint", variable.name="Delay")
+DDT_long<-na.omit(DDT_long)
+
+#### Making a standardized timescale ####
+library (tidyverse)
+#Recode the Delay to Same Time Scale (in weeks) - Weeks was chosen based on my (KSFD) prior work, but is arbitrary if day/month/year is preferred this can be done too
+DDT_long$DelayinWeeks[DDT_long$Delay == "ddis_scr_val_indif_point_6h" ] <-0.03571428571
+DDT_long$DelayinWeeks[DDT_long$Delay == "ddis_scr_val_indif_pnt_1da" ] <-0.14285714285
+DDT_long$DelayinWeeks[DDT_long$Delay == "ddis_scr_val_indif_pnt_1week" ] <-1
+DDT_long$DelayinWeeks[DDT_long$Delay == "ddis_scr_val_indif_pnt_1mth" ] <-4.345
+DDT_long$DelayinWeeks[DDT_long$Delay == "ddis_scr_val_indif_pnt_3mth" ] <-13.035
+DDT_long$DelayinWeeks[DDT_long$Delay == "ddis_scr_val_indif_pnt_1yr" ] <-52
+DDT_long$DelayinWeeks[DDT_long$Delay == "ddis_scr_val_indif_pnt_5yr" ] <-260
+
+#### Creating functions for hyperbolic k and AUC in environment ####
+## code modified for the ABCD study from open data from 
+# Alejandro de la Vega
+# July 5, 2013
+# https://gist.github.com/adelavega/5938057
+# Citation: Michaelson et al., 2013 (https://doi.org/10.3389/fpsyg.2013.00355)
+library(plyr)
+library(zoo)
+
+getHyperbolicK <- function(DVS) {
+  res <- nls(IndiffPoint~1/(1+k*DelayinWeeks),start=list(k=0.03571428571),data=DVS, control = list(maxiter = 5000))
+  k1 <- as.numeric(coef(res)[1])
+  k1 <- as.data.frame(k1)
+  colnames(k1)[1] <- "k"
+  return(k1)
+}
+##  Area Under The Curve ####
+auc <- function(df) {
+  id <- order(df$DelayinWeeks)
+  a <- sum(diff(df$DelayinWeeks[id])*rollmean(df$IndiffPoint[id],2))
+  a1 <- as.data.frame(a)
+  colnames(a1)[1] <- "auc"
+  return(a1)
+}
+
+
+#### Fitting a hyperbolic k and AUC function ####
+# Thank you to  Holly Sullivan-Toole for sharing this at the ABCD workshop
+#Subject  Loop by Holly Sullivan-Toole, Temple University (2021)
+# Getting subject IDs and number of subjects from data
+subj_ids <- unique(DDT_long$ID)
+n_subj <- length(subj_ids)
+klist<-list()
+auclist<-list()
+idlist<-list()
+
+# Subject loop
+ 
+for (i in 1:n_subj) {
+    # Subset out current subject
+    current_subj <- subset(DDT_long, ID==subj_ids[i])
+    # Get number of sessions for this subject currently one and so this is omitted but should be added 
+    #sess <- unique(current_subj$Time)
+   #n_sess <- length(sess)
+      # Session loop
+    #  for (s in 1:n_sess) {
+current_subj %>%
+         # filter(Time == s) %>%
+getHyperbolicK() -> klist[[i]]
+current_subj->idlist[[i]]
+}
+
+for (i in 1:n_subj) {
+  # Subset out current subject
+  current_subj <- subset(DDT_long, ID==subj_ids[i])
+current_subj %>%
+  auc()->auclist[[i]]
+}
+
+# make everything a vector (instead of a list) to bind the columns together into a data set
+unlist(idslist)->id
+unlist(klist)->k
+unlist(auclist)->auc
+DDT_k_parameters<-cbind (id, k, auc)
+
+
+### Check Indifference Point Plots ####
+library(ggplot2)
+library(dplyr)
+ID<-factor(DDT_long$ID) 
+DDT_long %>%
+ggplot(aes(x = DelayinWeeks, y = IndiffPoint, group=ID)) +
+  geom_line()
+
+
+
